@@ -1,0 +1,8 @@
+{
+  "name": "久久的闯关星球",
+  "description": "全科智能错题学习与举一反三闯关工具，支持拍照OCR识别错题、知识点提炼、变式题智能生成与易错点深度剖析，提供错题本收录与无损PDF排版打印功能。",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
