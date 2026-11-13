@@ -59,6 +59,26 @@ export const PrintableDocument: React.FC<PrintableDocumentProps> = ({
             {/* Original Problem */}
             <div className="p-3.5 rounded-lg border border-rose-200 bg-rose-50/20 space-y-2">
               <div className="font-bold text-xs text-rose-800">【原错题内容回顾】</div>
+
+              {/* Show original photo / graphic illustration if present */}
+              {record.imageUrl && (
+                <div className="my-2 max-h-48 overflow-hidden rounded border border-slate-300 bg-white p-1 text-center">
+                  <img
+                    src={record.imageUrl}
+                    alt="原题图示"
+                    className="max-h-44 max-w-full object-contain mx-auto"
+                  />
+                  <div className="text-[10px] text-slate-500 mt-0.5">（原题附图与图示）</div>
+                </div>
+              )}
+
+              {record.diagramDescription && (
+                <div className="text-[11px] text-blue-950 bg-blue-50/80 p-2 rounded border border-blue-200 leading-relaxed">
+                  <strong>📐 图示信息：</strong>
+                  {record.diagramDescription}
+                </div>
+              )}
+
               <div className="text-sm text-slate-900 whitespace-pre-line leading-relaxed font-medium">
                 {record.questionText}
               </div>

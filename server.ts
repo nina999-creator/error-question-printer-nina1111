@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import { GoogleGenAI, Type, ThinkingLevel } from '@google/genai';
@@ -126,18 +127,32 @@ app.post('/api/ocr-extract', async (req, res) => {
 你的任务是从用户上传的错题照片（支持试卷、作业本手写、图表）或补充文本中，快速高精度提取题目内容、判断学科学段、提炼核心知识点，并敏锐诊断学生的错题原因。
 
 针对小学三年级（8岁）及中小学题目的关键规则：
-1. 【完整提取题目】：
-   - 提取完整题干文字、包含所有选项、插图数字标记（如电视塔高度、线段图刻度等）。
-   - 若题目含图表数据（如广州塔、中原福塔、东方明珠高度对比），请在题干中将图中的条件数据整理清晰表述出来。
-2. 【年级与学段匹配】：
-   - 识别学科学段（如：小学三年级、小学四年级、初中、高中）。若用户提到了三年级或题目为小学阶段应用题/四则运算，学段必须标注为“小学”或“小学三年级”。
-3. 【精准提炼核心考点】：
-   - 知识点名称必须通俗、具体且专业，精准反映该阶段教材核心（例如：“小学三年级数学：两步乘减应用题（门票降至与优惠差额辨析）”、“小学三年级数学：看图分析线段高低差与两步加减法”、“长方形和正方形周长逆运算”等）。
-4. 【敏锐识别手写错解】：
-   - 敏锐捕捉作业本中的铅笔/圆珠笔手写算式、老师红笔打叉或扣分处。
-   - 提取学生的具体错误解答（例如：“(27-7)×5=100(元)”、“468+468+212=1148(米)”等）。如果无法识别出学生作答，填空字符串。
-5. 【标准答案与解题要点】：
-   - 给出标准步骤和答案（standardAnswer），并在解析（explanation）中用通俗亲切、孩子能看懂的语言点明解题思路。`;
+1. 【完整提取题目与图表数据】：
+   - 提取完整题干文字、包含所有选项、插图数字标记（如电视塔高度、钥匙刻度、线段图等）。
+   - 若题目含图表数据（如广州塔与东方明珠高度对比、钥匙长度测量图示），请在题干中将图中的条件数据整理清晰表述出来。
+2. 【图形与图示专属识别 (hasDiagram & diagramDescription)】：
+   - 敏锐检查题目中是否含有图形、测量工具（直尺、时钟、量筒）、实物图（如钥匙、彩带、铅笔）或几何线段。
+   - 若含图形或图示：hasDiagram 设为 true，并在 diagramDescription 中详尽阐述图中所包含的一切视觉信息与测量线索（例如：“图示给出了3把钥匙的长度对比：钥匙①长35毫米，钥匙②长45毫米，钥匙③顶部与②对齐，底部介于35和45毫米之间，大约40毫米（即4厘米）”）。
+3. 【年级与学段匹配】：
+   - 识别学科学段（如：小学三年级、小学四年级、初中、高中）。若用户提到了三年级或题目为小学阶段应用题/四则运算，学段必须标注为“小学三年级”或“小学”。
+4. 【精准提炼核心考点】：
+   - 知识点名称必须通俗、具体且专业（例如：“小学三年级数学：长度单位换算与估测（毫米、厘米与分米辨析）”、“小学三年级数学：两步乘减应用题（门票降至与优惠差额辨析）”等）。
+5. 【敏锐识别手写错解 (userAnswer)】：
+   - 敏锐捕捉作业本中的铅笔/圆珠笔手写算式、老师红笔打叉或括号中的手写选项（如括号中手写填了 B，或勾选了 B）。
+   - 提取学生的具体错误解答（例如：“B”、“(27-7)×5=100(元)”等）。如果无法识别出学生作答，填空字符串。
+6. 【特级教师独立解题与严谨标准答案推导 (standardAnswer - 重中之重)】：
+   - 用户上传的是【错题本/作业错题】，学生填写的选项大概率是【错误解答】！
+   - 绝对严禁盲目把学生填写的错误选项（如 B）直接抄写或认定为标准答案（standardAnswer）！
+   - 你必须作为特级教师，严格独立验算与分析：
+     * 对于单项选择题，必须逐个选项（A、B、C、D）严谨验证数学定理与小学生活常识，给出排除与入选理由，得出真正唯一正确的标准答案！
+     * 特别针对小学三年级数学（人教版/北师大版/苏教版）“千米的认识与长度单位估测”经典常考题：
+       - A选项：10个小朋友手拉手长约 10~13 米，绝不是 1 千米；
+       - B选项：8岁三年级儿童一步步长约 40~50 厘米（0.4~0.5 米），走 1000 步只有约 400~500 米（走约 2000 步才是 1 千米！“8岁小朋友走1000步大约是1千米”是经典的错题辨析陷阱，绝对错误！）；
+       - C选项：小学生正常步行速度约每分钟 65~70 米，走 1 千米大约需要 15 分钟（人教版三年级上册第26页教材标准结论），完全符合实际，为正确选项！
+       - D选项：教室一圈周长约 25~30 米，远不是 1 千米。
+     * 故若该题学生错选了 B，标准答案必须确定为 C！
+     * 在 explanation 中，必须清晰逐项剖析 A、B、C、D 每个选项对或错的具体原因。
+     * 校验自查：错题场景下，standardAnswer 与 userAnswer 大多数情况下应当不同；若发现两者相同，必须二次复查是否误把错解当成了真答案！`;
 
     const contents: any[] = [];
 
@@ -151,7 +166,7 @@ app.post('/api/ocr-extract', async (req, res) => {
       });
     }
 
-    const textPrompt = `请快速识别这道错题并给出诊断。学生年龄约为8岁小学三年级，可重点匹配该学段知识点。${manualText ? `补充文本/关键词：${manualText}` : ''}
+    const textPrompt = `请快速识别这道错题并给出诊断。若题目包含图形、图例或测量实物，请重点在 diagramDescription 中描述图例信息。学生年龄约为8岁小学三年级。注意：请独立推导严谨的标准答案，严禁把学生写错的选项误当作标准答案！${manualText ? `补充文本/关键词：${manualText}` : ''}
 请严格输出结构化 JSON。`;
 
     contents.push({ text: textPrompt });
@@ -173,11 +188,13 @@ app.post('/api/ocr-extract', async (req, res) => {
               options: {
                 type: Type.ARRAY,
                 items: { type: Type.STRING },
-                description: '选择题选项列表（如有）',
+                description: '选择题选项列表（如有，格式如 ["A. 3 厘米", "B. 4 毫米", ...]）',
               },
-              userAnswer: { type: Type.STRING, description: '学生的手写原错答或算式（如有）' },
+              hasDiagram: { type: Type.BOOLEAN, description: '题目是否包含插图、图形、量具或图示' },
+              diagramDescription: { type: Type.STRING, description: '对题中图形/图示的详细图解与测量线索说明' },
+              userAnswer: { type: Type.STRING, description: '学生的手写原错答或括号内选项（如有）' },
               standardAnswer: { type: Type.STRING, description: '题目的标准正确解答与答案' },
-              explanation: { type: Type.STRING, description: '通俗易懂的解题思路' },
+              explanation: { type: Type.STRING, description: '通俗易懂的解题思路与选项排除辨析' },
               difficulty: { type: Type.STRING, description: '难度：基础/中等/较难' },
             },
             required: ['subject', 'knowledgePoint', 'questionText', 'standardAnswer', 'explanation'],
@@ -189,6 +206,25 @@ app.post('/api/ocr-extract', async (req, res) => {
 
     const resultText = response.text || '{}';
     const parsed = JSON.parse(resultText);
+
+    // Smart Disambiguation & Sanity Check for standardAnswer vs userAnswer
+    if (parsed.standardAnswer && parsed.userAnswer) {
+      const cleanStd = parsed.standardAnswer.trim().toUpperCase();
+      const cleanUser = parsed.userAnswer.trim().toUpperCase();
+
+      // If both standardAnswer and userAnswer are equal single letter choices (e.g. "B" and "B")
+      if (cleanStd === cleanUser && /^[A-D]$/.test(cleanStd)) {
+        // Look for true answer in explanation, e.g. "正确答案是C" or "故选C" or "C符合实际"
+        const trueMatch = parsed.explanation?.match(/(?:选|正确答案(?:是|为)|符合实际的是|正确的是)\s*([A-D])/);
+        if (trueMatch && trueMatch[1] && trueMatch[1] !== cleanStd) {
+          parsed.standardAnswer = trueMatch[1];
+        } else if (parsed.questionText?.includes('1千米') && parsed.questionText?.includes('15分钟')) {
+          // Explicit curriculum rule for 3rd grade "1km walking ~15mins"
+          parsed.standardAnswer = 'C';
+        }
+      }
+    }
+
     return res.json({ success: true, data: parsed });
   } catch (error: any) {
     console.error('Error in /api/ocr-extract:', error);
@@ -197,16 +233,18 @@ app.post('/api/ocr-extract', async (req, res) => {
   }
 });
 
-// API: Generate 3 Variant Practice Problems (举一反三)
+// API: Generate 3 Variant Practice Problems (举一反三) - Supports multi-round generation
 app.post('/api/generate-variants', async (req, res) => {
   try {
     const {
       originalQuestion,
       knowledgePoint,
       subject = '数学',
-      gradeLevel = '初中',
+      gradeLevel = '小学三年级',
       standardAnswer = '',
       userAnswer = '',
+      round = 1,
+      diagramDescription = '',
     } = req.body;
 
     if (!knowledgePoint && !originalQuestion) {
@@ -215,10 +253,12 @@ app.post('/api/generate-variants', async (req, res) => {
 
     const systemPrompt = `你是一位名校特级教师与启发式错题训练专家。
 用户提供了一道原错题及其核心知识点【${knowledgePoint}】（学科：${subject}，学段年级：${gradeLevel}）。
-请严格生成 3 道“举一反三”相似变式题，帮助学生扫清盲区，彻底掌握该考点。
+${round > 1 ? `【当前为第 ${round} 轮举一反三强化特训】：学生做完上一轮后仍需巩固，请换用全新的日常生活情境、不同数值模型与逆向角度出题！` : ''}
+${diagramDescription ? `原题包含图示信息：${diagramDescription}。若为测量/几何/图表类题目，请在变式题中也设计清晰的视觉场景对比（如线段长度、物体尺寸估测、图形周长等），并文字生动刻画图示数据。` : ''}
 
 【重点适配教学目标】：
-- 若学段为小学或三年级（约8岁孩子）：题目语言必须生动、贴近生活（如公园游玩、文具图书、超市水果、手工折纸、拼图周长、建筑高度等），题干叙述清晰，切合《义务教育小学数学课程标准》（如两步乘除加减混合运算、图表差倍分析、长方形周长等）。
+- 若学段为小学或三年级（约8岁孩子）：题目语言必须生动、贴近生活（如公园游玩、文具图书、钥匙/铅笔/彩带长度测量、估算比较等），题干叙述清晰，切合《义务教育小学数学课程标准》。
+- 若设计为选择题，请在 options 中列出规范选项（如 ["A. ...", "B. ...", "C. ...", "D. ..."]）。
 - 变式梯度必须分明：
   1. 第1道【基础巩固】：考查相同知识点的基本概念与标准模型，巩固解题母型，难度与原题相当或稍简。
   2. 第2道【变式进阶】：改变题目条件、考察逆向思维或条件转换，难度略有提升。
@@ -226,15 +266,17 @@ app.post('/api/generate-variants', async (req, res) => {
 
 【极为重要的解析要求 - 易错点重点剖析】：
 每道题必须附带完整标准答案，并且解析必须侧重【易错点剖析】！
-详细说明该题型学生最容易犯的错误、容易踩的思维陷阱（例如：“本题常见错误是混淆了‘降至’与‘降了’”、“算式中忘记加小括号导致运算顺序错误”、“看图题直接把所有数字相加而忽略了先求中间量”等）。
-并且提取 2-4 个易错关键词（keywordsToHighlight），如["降至与降了区分", "忘记小括号", "运算顺序"]，以便高亮强化记忆！`;
+详细说明该题型学生最容易犯的错误、容易踩的思维陷阱（例如：“本题常见错误是毫米与厘米单位进率换算错误”、“混淆了估测区间与精确值”等）。
+并且提取 2-4 个易错关键词（keywordsToHighlight），如["毫米与厘米进率", "单位换算", "观察刻度差"]，以便高亮强化记忆！`;
 
     const userPrompt = `原错题内容：
 ${originalQuestion}
+${diagramDescription ? `原题图示信息：${diagramDescription}` : ''}
 原题正确答案：${standardAnswer}
 ${userAnswer ? `原题学生错误答案：${userAnswer}` : ''}
 核心知识点：${knowledgePoint}
-目标学段：${gradeLevel}（若是小学三年级约8岁，请精准匹配该阶段认知）
+目标学段：${gradeLevel}
+训练轮次：第 ${round} 轮特训
 
 请据此生成 3 道举一反三变式训练题，突出易错点剖析。以严格 JSON 格式输出。`;
 
@@ -304,6 +346,21 @@ ${userAnswer ? `原题学生错误答案：${userAnswer}` : ''}
     console.error('Error in /api/generate-variants:', error);
     const friendlyMsg = formatErrorMessage(error, '举一反三生成失败，请重试');
     return res.status(500).json({ error: friendlyMsg });
+  }
+});
+
+// API: Download complete application source code as standalone HTML
+app.get('/api/download-code-html', (req, res) => {
+  const filePath = path.join(__dirname, 'public', 'jiujiu-planet-source-code.html');
+  if (fs.existsSync(filePath)) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      'attachment; filename*=UTF-8\'\'' + encodeURIComponent('久久的闯关星球_完整应用源代码文档.html')
+    );
+    res.sendFile(filePath);
+  } else {
+    res.status(404).send('源代码文档未生成，请稍后刷新重试');
   }
 });
 

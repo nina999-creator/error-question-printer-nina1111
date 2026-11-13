@@ -17,12 +17,15 @@ import {
   XCircle,
   RotateCcw,
   Clock,
+  Image as ImageIcon,
+  ZoomIn,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { MistakeRecord, VariantProblem } from '../types';
 import { PRESET_MISTAKE_IMAGES } from '../data/sampleMistakes';
 import { renderHighlightedText } from '../utils/highlight';
 import { compressImage } from '../utils/imageCompressor';
+import { InteractiveAnswerBox } from './InteractiveAnswerBox';
 
 const SESSION_STORAGE_KEY = 'jiujiu_recognition_session_v1';
 
@@ -43,6 +46,8 @@ interface RecognitionSessionState {
   standardAnswer: string;
   explanation: string;
   difficulty: string;
+  hasDiagram?: boolean;
+  diagramDescription?: string;
   knowledgeSummary: string;
   variants: VariantProblem[];
   revealedVariantAnswers: Record<string, boolean>;
@@ -136,6 +141,9 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
   const [standardAnswer, setStandardAnswer] = useState<string>(initial?.standardAnswer ?? '');
   const [explanation, setExplanation] = useState<string>(initial?.explanation ?? '');
   const [difficulty, setDifficulty] = useState<string>(initial?.difficulty ?? '中等');
+  const [hasDiagram, setHasDiagram] = useState<boolean>(initial?.hasDiagram ?? false);
+  const [diagramDescription, setDiagramDescription] = useState<string>(initial?.diagramDescription ?? '');
+  const [showDiagramZoom, setShowDiagramZoom] = useState<boolean>(false);
 
   // Variant questions state
   const [knowledgeSummary, setKnowledgeSummary] = useState<string>(initial?.knowledgeSummary ?? '');
@@ -172,6 +180,8 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
       standardAnswer,
       explanation,
       difficulty,
+      hasDiagram,
+      diagramDescription,
       knowledgeSummary,
       variants,
       revealedVariantAnswers,
@@ -194,6 +204,8 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
     standardAnswer,
     explanation,
     difficulty,
+    hasDiagram,
+    diagramDescription,
     knowledgeSummary,
     variants,
     revealedVariantAnswers,
@@ -341,6 +353,9 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
       setUserAnswer('');
       setStandardAnswer('');
       setExplanation('');
+      setHasDiagram(false);
+      setDiagramDescription('');
+      setShowDiagramZoom(false);
       setKnowledgeSummary('');
       setVariants([]);
       setRecognitionError(null);
@@ -435,6 +450,8 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
         const nextStandardAnswer = data.standardAnswer || '';
         const nextExplanation = data.explanation || '';
         const nextDifficulty = data.difficulty || '中等';
+        const nextHasDiagram = !!(data.hasDiagram || data.diagramDescription);
+        const nextDiagramDescription = data.diagramDescription || '';
 
         setSubject(nextSubject);
         setGradeLevel(nextGradeLevel);
@@ -444,6 +461,8 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
         setStandardAnswer(nextStandardAnswer);
         setExplanation(nextExplanation);
         setDifficulty(nextDifficulty);
+        setHasDiagram(nextHasDiagram);
+        setDiagramDescription(nextDiagramDescription);
 
         setStoredSessionState({
           isRecognizing: false,
@@ -456,6 +475,8 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
           standardAnswer: nextStandardAnswer,
           explanation: nextExplanation,
           difficulty: nextDifficulty,
+          hasDiagram: nextHasDiagram,
+          diagramDescription: nextDiagramDescription,
         });
 
         // Scroll to the confirmed results section
@@ -530,6 +551,7 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
           gradeLevel,
           standardAnswer,
           userAnswer,
+          diagramDescription,
         }),
         signal: controller.signal,
       });
@@ -553,12 +575,23 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
 
       const data = json.data;
       if (data && data.variants) {
+        // Sanitize variants to ensure unique React keys and pristine unanswered state
+        const sanitizedVariants: VariantProblem[] = data.variants.map(
+          (v: VariantProblem, idx: number) => ({
+            ...v,
+            id: `var-${Date.now()}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
+            childAnswer: '',
+            hasChecked: false,
+            isCorrect: null,
+          })
+        );
+
         setKnowledgeSummary(data.knowledgeSummary || '');
-        setVariants(data.variants);
+        setVariants(sanitizedVariants);
 
         const initialRevealed: Record<string, boolean> = {};
-        data.variants.forEach((v: VariantProblem) => {
-          initialRevealed[v.id] = true;
+        sanitizedVariants.forEach((v: VariantProblem) => {
+          initialRevealed[v.id] = false;
         });
         setRevealedVariantAnswers(initialRevealed);
 
@@ -566,7 +599,7 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
           isGeneratingVariants: false,
           variantStartTime: null,
           knowledgeSummary: data.knowledgeSummary || '',
-          variants: data.variants,
+          variants: sanitizedVariants,
           revealedVariantAnswers: initialRevealed,
         });
 
@@ -624,7 +657,17 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
       explanation,
       knowledgeSummary,
       imageUrl: selectedImage || undefined,
+      hasDiagram,
+      diagramDescription,
       variants,
+      currentRound: 1,
+      practiceRounds: [
+        {
+          round: 1,
+          generatedAt: Date.now(),
+          variants,
+        },
+      ],
       masteryStatus: 'learning',
     };
 
@@ -658,7 +701,17 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
       explanation,
       knowledgeSummary,
       imageUrl: selectedImage || undefined,
+      hasDiagram,
+      diagramDescription,
       variants,
+      currentRound: 1,
+      practiceRounds: [
+        {
+          round: 1,
+          generatedAt: Date.now(),
+          variants,
+        },
+      ],
       masteryStatus: 'learning',
     };
     onQuickPrint(currentRecord);
@@ -1029,6 +1082,62 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
             />
           </div>
 
+          {/* Attached Diagram / Graphic Information Display (For questions with figures like keys, rulers, shapes, heights) */}
+          {(selectedImage || hasDiagram || diagramDescription) && (
+            <div className="p-4 rounded-xl border-2 border-indigo-200 bg-gradient-to-br from-indigo-50/70 via-white to-indigo-50/40 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center space-x-2">
+                  <div className="p-1.5 rounded-lg bg-indigo-600 text-white">
+                    <ImageIcon className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-slate-800 text-xs sm:text-sm">
+                      📷 题目图形/图示内容与解析（孩子做题重要参照）
+                    </span>
+                    <span className="ml-2 text-[11px] text-indigo-700 bg-indigo-100/80 px-2 py-0.5 rounded-full font-medium">
+                      已自动保留并在做题与打印中同步呈现
+                    </span>
+                  </div>
+                </div>
+                {selectedImage && (
+                  <button
+                    type="button"
+                    onClick={() => setShowDiagramZoom(!showDiagramZoom)}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center space-x-1 cursor-pointer bg-white px-2.5 py-1 rounded-lg border border-indigo-200 shadow-xs"
+                  >
+                    <ZoomIn className="w-3.5 h-3.5" />
+                    <span>{showDiagramZoom ? '收起大图' : '查看原图'}</span>
+                  </button>
+                )}
+              </div>
+
+              {selectedImage && showDiagramZoom && (
+                <div className="rounded-xl overflow-hidden border border-indigo-300 bg-white p-2">
+                  <img
+                    src={selectedImage}
+                    alt="原题图示大图"
+                    className="max-h-80 w-auto mx-auto object-contain rounded-lg"
+                  />
+                </div>
+              )}
+
+              {/* Diagram Description / Textual details (e.g. 钥匙1 35毫米, 钥匙2 45毫米) */}
+              <div>
+                <label className="block text-[11px] font-bold text-indigo-900 mb-1 flex items-center justify-between">
+                  <span>图示关键数据与结构提取（可编辑）：</span>
+                  <span className="text-[10px] text-slate-500 font-normal">如标尺刻度、几何高低关系、图示已知条件</span>
+                </label>
+                <textarea
+                  rows={2}
+                  value={diagramDescription}
+                  onChange={(e) => setDiagramDescription(e.target.value)}
+                  placeholder="例如：图示中钥匙①长度为35毫米，钥匙②长度为45毫米，钥匙③顶部与前两把对齐，底部比钥匙②略短..."
+                  className="w-full text-xs p-2.5 rounded-lg border border-indigo-200 bg-white text-slate-800 focus:outline-hidden focus:ring-2 focus:ring-indigo-400"
+                />
+              </div>
+            </div>
+          )}
+
           {/* Answers Row: Student's Error vs Standard Answer */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="p-3.5 rounded-xl bg-rose-50/60 border border-rose-100">
@@ -1039,24 +1148,56 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
                 type="text"
                 value={userAnswer}
                 onChange={(e) => setUserAnswer(e.target.value)}
-                placeholder="例如：误选了 A；或者漏除了负号..."
+                placeholder="例如：误选了 B；或者漏算了单位进率..."
                 className="w-full text-xs font-medium text-slate-800 px-3 py-1.5 rounded-lg bg-white border border-rose-200 focus:outline-hidden focus:ring-2 focus:ring-rose-400"
               />
             </div>
 
             <div className="p-3.5 rounded-xl bg-emerald-50/60 border border-emerald-100">
-              <label className="block text-xs font-bold text-emerald-800 mb-1">
-                标准正确答案：
-              </label>
+              <div className="flex items-center justify-between mb-1">
+                <label className="text-xs font-bold text-emerald-800">
+                  标准正确答案：
+                </label>
+                <div className="flex items-center space-x-1">
+                  <span className="text-[10px] text-emerald-700 font-medium mr-1">快捷选择:</span>
+                  {['A', 'B', 'C', 'D'].map((letter) => (
+                    <button
+                      key={letter}
+                      type="button"
+                      onClick={() => setStandardAnswer(letter)}
+                      className={`w-5 h-5 rounded text-[11px] font-bold transition flex items-center justify-center cursor-pointer ${
+                        standardAnswer.trim().toUpperCase() === letter
+                          ? 'bg-emerald-700 text-white shadow-xs'
+                          : 'bg-white text-emerald-800 border border-emerald-300 hover:bg-emerald-100'
+                      }`}
+                    >
+                      {letter}
+                    </button>
+                  ))}
+                </div>
+              </div>
               <input
                 type="text"
                 value={standardAnswer}
                 onChange={(e) => setStandardAnswer(e.target.value)}
-                placeholder="例如：C (m ≤ 3/2 且 m ≠ 1)"
+                placeholder="例如：C (曲米走1千米大约需要15分钟)"
                 className="w-full text-xs font-bold text-emerald-900 px-3 py-1.5 rounded-lg bg-white border border-emerald-200 focus:outline-hidden focus:ring-2 focus:ring-emerald-400"
               />
             </div>
           </div>
+
+          {/* Alert if standard answer accidentally equals student's wrong answer */}
+          {standardAnswer &&
+            userAnswer &&
+            standardAnswer.trim().toUpperCase() === userAnswer.trim().toUpperCase() && (
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-300 text-amber-900 text-xs flex items-center space-x-2">
+                <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                <div className="flex-1">
+                  <span className="font-bold">答案核对提示：</span>
+                  当前标准答案与学生原错答相同（均为“{standardAnswer}”）。对于考卷中被打叉的错题，学生所选大概率为错误选项（如误选B），请注意核对并将标准答案更正为正确选项（如上方一键点击选 C）。
+                </div>
+              </div>
+            )}
 
           {/* Explanation if present */}
           {explanation && (
@@ -1195,19 +1336,29 @@ export const RecognitionPage: React.FC<RecognitionPageProps> = ({
                     {v.questionText}
                   </div>
 
-                  {/* Options if provided */}
-                  {v.options && v.options.length > 0 && (
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 mb-4">
-                      {v.options.map((opt, optIdx) => (
-                        <div
-                          key={optIdx}
-                          className="px-3 py-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700 font-medium"
-                        >
-                          {opt}
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  {/* Interactive Child Answering Box directly under each problem */}
+                  <div className="my-2">
+                    <InteractiveAnswerBox
+                      problem={v}
+                      onAnswerSubmit={(problemId, answer, isCorrect) => {
+                        setVariants((prev) =>
+                          prev.map((item) =>
+                            item.id === problemId || item.id === v.id
+                              ? {
+                                  ...item,
+                                  childAnswer: answer,
+                                  isCorrect,
+                                  hasChecked: true,
+                                  answeredAt: Date.now(),
+                                }
+                              : item
+                          )
+                        );
+                      }}
+                      isRevealed={isRevealed}
+                      onToggleReveal={() => toggleVariantAnswer(v.id)}
+                    />
+                  </div>
 
                   {/* Answer & Pitfall Analysis (Revealed / Hidden) */}
                   {isRevealed && (

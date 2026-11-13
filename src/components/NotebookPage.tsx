@@ -404,14 +404,30 @@ export const NotebookPage: React.FC<NotebookPageProps> = ({
                   </div>
 
                   {/* Knowledge Point Tag */}
-                  <div className="mb-2">
-                    <h4 className="text-sm font-extrabold text-slate-900 line-clamp-1 group-hover:text-indigo-600 transition">
+                  <div className="mb-2 flex items-center justify-between">
+                    <h4 className="text-sm font-extrabold text-slate-900 line-clamp-1 group-hover:text-indigo-600 transition flex-1">
                       {record.knowledgePoint}
                     </h4>
+                    {record.imageUrl && (
+                      <span className="ml-2 px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 text-[10px] font-bold border border-blue-200 shrink-0">
+                        📷 含图示
+                      </span>
+                    )}
                   </div>
 
+                  {/* Thumbnail if present */}
+                  {record.imageUrl && (
+                    <div className="mb-2.5 h-20 rounded-lg overflow-hidden border border-slate-200 bg-slate-50 flex items-center justify-center">
+                      <img
+                        src={record.imageUrl}
+                        alt="错题图示缩略图"
+                        className="h-full object-contain mx-auto"
+                      />
+                    </div>
+                  )}
+
                   {/* Question Stem Excerpt */}
-                  <p className="text-xs text-slate-600 line-clamp-3 leading-relaxed mb-3 font-medium">
+                  <p className="text-xs text-slate-600 line-clamp-2 leading-relaxed mb-3 font-medium">
                     {record.questionText}
                   </p>
 
@@ -424,21 +440,31 @@ export const NotebookPage: React.FC<NotebookPageProps> = ({
                   )}
                 </div>
 
-                {/* Card Footer: Variants Count & Action Buttons */}
+                {/* Card Footer: Variants Count, Practice Rounds & Action Buttons */}
                 <div className="pt-3 border-t border-slate-100 flex items-center justify-between mt-auto">
-                  <div className="flex items-center space-x-1 text-xs font-semibold text-indigo-700 bg-indigo-50/80 px-2.5 py-1 rounded-lg">
-                    <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                    <span>3道举一反三题</span>
+                  <div className="flex items-center space-x-1.5 text-xs font-semibold text-indigo-700">
+                    <span className="bg-indigo-50/80 px-2 py-0.5 rounded-lg flex items-center space-x-1">
+                      <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                      <span>
+                        {record.practiceRounds && record.practiceRounds.length > 1
+                          ? `${record.practiceRounds.length} 轮变式特训`
+                          : '3道举一反三题'}
+                      </span>
+                    </span>
                   </div>
 
-                  <div className="flex items-center space-x-1">
+                  <div className="flex items-center space-x-1.5">
+                    <span className="text-xs font-bold text-indigo-600 group-hover:text-indigo-700 flex items-center">
+                      <span>✍️ 在线作答</span>
+                      <ChevronRight className="w-3.5 h-3.5 ml-0.5 group-hover:translate-x-0.5 transition" />
+                    </span>
                     <button
                       type="button"
                       onClick={(e) => {
                         e.stopPropagation();
                         onOpenPrintPreview([record]);
                       }}
-                      className="p-1.5 rounded-lg text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 transition"
+                      className="p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 transition"
                       title="打印此题组"
                     >
                       <Printer className="w-4 h-4" />

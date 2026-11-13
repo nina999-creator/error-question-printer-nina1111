@@ -4,36 +4,66 @@ import {
   Printer,
   Sparkles,
   AlertTriangle,
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
   Tag,
   Calendar,
   Award,
-  BookOpen,
+  RefreshCw,
+  Image as ImageIcon,
+  ZoomIn,
+  Layers,
+  CheckCircle2,
 } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { MistakeRecord } from '../types';
+import { MistakeRecord, VariantProblem, PracticeRound } from '../types';
 import { renderHighlightedText } from '../utils/highlight';
+import { InteractiveAnswerBox } from './InteractiveAnswerBox';
 
 interface MistakeDetailModalProps {
   record: MistakeRecord | null;
   onClose: () => void;
   onPrint: (record: MistakeRecord) => void;
   onToggleMastery?: (record: MistakeRecord) => void;
+  onUpdateRecord?: (record: MistakeRecord) => void;
 }
 
 export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
-  record,
+  record: initialRecord,
   onClose,
   onPrint,
   onToggleMastery,
+  onUpdateRecord,
 }) => {
-  if (!record) return null;
+  if (!initialRecord) return null;
 
+  const [record, setRecord] = useState<MistakeRecord>(initialRecord);
+  const [selectedRoundIndex, setSelectedRoundIndex] = useState<number>(0);
+  const [isGeneratingNextRound, setIsGeneratingNextRound] = useState<boolean>(false);
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [isImageZoomed, setIsImageZoomed] = useState<boolean>(false);
+
+  // Maintain revealed answers per variant ID
   const [revealedAnswers, setRevealedAnswers] = useState<Record<string, boolean>>({
     original: true,
   });
+
+  // Calculate practice rounds: if record has practiceRounds use them; otherwise construct Round 1 from record.variants
+  const practiceRounds: PracticeRound[] =
+    record.practiceRounds && record.practiceRounds.length > 0
+      ? record.practiceRounds
+      : [
+          {
+            round: 1,
+            generatedAt: record.createdAt,
+            title: '第 1 轮母题特训 (基础巩固)',
+            variants: record.variants,
+          },
+        ];
+
+  // Active variants for current selected round tab
+  const activeRound = practiceRounds[selectedRoundIndex] || practiceRounds[0];
+  const activeVariants = activeRound?.variants || [];
 
   const toggleReveal = (key: string) => {
     setRevealedAnswers((prev) => ({
@@ -45,17 +75,142 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
   const handleToggleMastery = () => {
     if (onToggleMastery) {
       onToggleMastery(record);
-      if (record.masteryStatus !== 'mastered') {
+      const nextStatus: 'learning' | 'mastered' =
+        record.masteryStatus === 'mastered' ? 'learning' : 'mastered';
+      const updated: MistakeRecord = { ...record, masteryStatus: nextStatus };
+      setRecord(updated);
+
+      if (nextStatus === 'mastered') {
         try {
           confetti({
-            particleCount: 40,
-            spread: 50,
+            particleCount: 50,
+            spread: 60,
             origin: { y: 0.6 },
           });
         } catch (e) {
           // ignore
         }
       }
+    }
+  };
+
+  // Submit answer for interactive practice under a variant
+  const handleAnswerSubmit = (problemId: string, answer: string, isCorrect: boolean) => {
+    const updatedVariants = activeVariants.map((v) => {
+      if (v.id === problemId) {
+        return {
+          ...v,
+          childAnswer: answer,
+          isCorrect,
+          hasChecked: true,
+          answeredAt: Date.now(),
+        };
+      }
+      return v;
+    });
+
+    const updatedRounds = practiceRounds.map((r, idx) => {
+      if (idx === selectedRoundIndex) {
+        return { ...r, variants: updatedVariants };
+      }
+      return r;
+    });
+
+    const updatedRecord: MistakeRecord = {
+      ...record,
+      variants: selectedRoundIndex === 0 ? updatedVariants : record.variants,
+      practiceRounds: updatedRounds,
+    };
+
+    setRecord(updatedRecord);
+    if (onUpdateRecord) {
+      onUpdateRecord(updatedRecord);
+    }
+  };
+
+  // Request next round of 3 variants when student is still struggling ("做完还是不会，再来一组！")
+  const handleGenerateNextRound = async () => {
+    setIsGeneratingNextRound(true);
+    setGenerateError(null);
+
+    const nextRoundNumber = practiceRounds.length + 1;
+
+    try {
+      const res = await fetch('/api/generate-variants', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          originalQuestion: record.questionText,
+          knowledgePoint: record.knowledgePoint,
+          subject: record.subject,
+          gradeLevel: record.gradeLevel || '小学三年级',
+          standardAnswer: record.standardAnswer,
+          userAnswer: record.userAnswer,
+          round: nextRoundNumber,
+          diagramDescription: record.diagramDescription,
+        }),
+      });
+
+      const resText = await res.text();
+      let json: any = null;
+      try {
+        json = JSON.parse(resText);
+      } catch {
+        throw new Error('解析生成数据失败，请重试');
+      }
+
+      if (!res.ok || json.error) {
+        throw new Error(json.error || '生成新一轮变式题失败，请重试');
+      }
+
+      const rawVariants: VariantProblem[] = json.data?.variants || [];
+      if (rawVariants.length === 0) {
+        throw new Error('未获取到变式题目，请点击重试');
+      }
+
+      const newVariants: VariantProblem[] = rawVariants.map((v, vIdx) => ({
+        ...v,
+        id: `var-r${nextRoundNumber}-${Date.now()}-${vIdx}-${Math.random().toString(36).slice(2, 6)}`,
+        childAnswer: '',
+        hasChecked: false,
+        isCorrect: null,
+      }));
+
+      // Append new round
+      const newRound: PracticeRound = {
+        round: nextRoundNumber,
+        generatedAt: Date.now(),
+        title: `第 ${nextRoundNumber} 轮定向强化 (换3道新题)`,
+        variants: newVariants,
+      };
+
+      const updatedRounds = [...practiceRounds, newRound];
+      const updatedRecord: MistakeRecord = {
+        ...record,
+        practiceRounds: updatedRounds,
+      };
+
+      setRecord(updatedRecord);
+      setSelectedRoundIndex(updatedRounds.length - 1);
+
+      if (onUpdateRecord) {
+        onUpdateRecord(updatedRecord);
+      }
+
+      try {
+        confetti({
+          particleCount: 40,
+          spread: 50,
+          origin: { y: 0.6 },
+        });
+      } catch (e) {
+        // ignore
+      }
+    } catch (err: any) {
+      console.error(err);
+      setGenerateError(err?.message || '生成新一轮题目失败，请检查网络');
+    } finally {
+      setIsGeneratingNextRound(false);
     }
   };
 
@@ -81,8 +236,13 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
               {formattedDate}
             </span>
             {record.gradeLevel && (
-              <span className="text-xs px-2 py-0.5 rounded-md bg-slate-200 text-slate-700">
+              <span className="text-xs px-2.5 py-0.5 rounded-md bg-amber-100 text-amber-900 font-bold">
                 {record.gradeLevel}
+              </span>
+            )}
+            {practiceRounds.length > 1 && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 font-bold flex items-center">
+                <Layers className="w-3 h-3 mr-1" /> 已练 {practiceRounds.length} 轮
               </span>
             )}
           </div>
@@ -99,7 +259,7 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition"
+              className="p-1.5 rounded-xl text-slate-400 hover:text-slate-600 hover:bg-slate-200/60 transition cursor-pointer"
             >
               <X className="w-5 h-5" />
             </button>
@@ -120,7 +280,7 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
               </h3>
               {record.knowledgeSummary && (
                 <p className="mt-1.5 text-xs text-amber-900 font-medium">
-                  💡 <span className="font-bold">秒杀口诀：</span>
+                  💡 <span className="font-bold">解题口诀：</span>
                   {record.knowledgeSummary}
                 </p>
               )}
@@ -130,7 +290,7 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
               <button
                 type="button"
                 onClick={handleToggleMastery}
-                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1 shrink-0 ${
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition flex items-center space-x-1 shrink-0 cursor-pointer ${
                   record.masteryStatus === 'mastered'
                     ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
                     : 'bg-white hover:bg-amber-100/60 text-slate-700 border border-slate-300'
@@ -148,16 +308,16 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
             )}
           </div>
 
-          {/* 1. Original Problem Card */}
+          {/* 1. Original Problem Card with Diagram / Picture Preview */}
           <div className="rounded-2xl border border-slate-200 p-5 bg-slate-50/50 space-y-3">
             <div className="flex items-center justify-between">
               <span className="px-2.5 py-0.5 rounded-md bg-rose-100 text-rose-800 text-xs font-black">
-                【原错题内容】
+                【原错题内容回顾】
               </span>
               <button
                 type="button"
                 onClick={() => toggleReveal('original')}
-                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center space-x-1"
+                className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center space-x-1 cursor-pointer"
               >
                 <span>{revealedAnswers['original'] ? '收起答案' : '查看原题答案'}</span>
                 {revealedAnswers['original'] ? (
@@ -168,14 +328,44 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
               </button>
             </div>
 
-            {/* Attached Photo if any */}
+            {/* Attached Photo / Graphic Diagram Section */}
             {record.imageUrl && (
-              <div className="my-3 max-h-52 overflow-hidden rounded-xl border border-slate-200 bg-white p-2">
-                <img
-                  src={record.imageUrl}
-                  alt="原题拍照记录"
-                  className="max-h-48 object-contain mx-auto"
-                />
+              <div className="my-3 rounded-xl border border-indigo-200 bg-white p-3 space-y-2">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-indigo-900 flex items-center">
+                    <ImageIcon className="w-3.5 h-3.5 mr-1 text-indigo-600" />
+                    <span>原题图示 / 题干附图（做题请参考）：</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsImageZoomed(!isImageZoomed)}
+                    className="text-[11px] text-indigo-600 hover:text-indigo-800 font-semibold flex items-center space-x-0.5"
+                  >
+                    <ZoomIn className="w-3 h-3 mr-0.5" />
+                    <span>{isImageZoomed ? '恢复小图' : '点击放大查看图表'}</span>
+                  </button>
+                </div>
+                <div
+                  className={`overflow-hidden rounded-lg bg-slate-100 flex items-center justify-center transition-all ${
+                    isImageZoomed ? 'max-h-[480px] p-2' : 'max-h-56 p-2'
+                  }`}
+                >
+                  <img
+                    src={record.imageUrl}
+                    alt="错题图示"
+                    className="max-h-full object-contain mx-auto rounded shadow-xs"
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Diagram Description / Clues if available */}
+            {record.diagramDescription && (
+              <div className="p-3 rounded-xl bg-blue-50/80 border border-blue-200 text-xs text-blue-950 leading-relaxed">
+                <span className="font-bold text-blue-900 block mb-0.5">
+                  📐【图示信息解析与图例对照】：
+                </span>
+                {record.diagramDescription}
               </div>
             )}
 
@@ -206,9 +396,34 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
                     {record.userAnswer}
                   </div>
                 )}
-                <div className="text-xs bg-emerald-50/80 p-2.5 rounded-xl border border-emerald-200 text-emerald-950">
-                  <span className="font-bold text-emerald-800 mr-1.5">✅ 标准答案：</span>
-                  {record.standardAnswer}
+                <div className="text-xs bg-emerald-50/80 p-2.5 rounded-xl border border-emerald-200 text-emerald-950 flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <span className="font-bold text-emerald-800 mr-1.5">✅ 标准答案：</span>
+                    <span className="font-bold">{record.standardAnswer}</span>
+                  </div>
+                  {onUpdateRecord && (
+                    <div className="flex items-center space-x-1">
+                      <span className="text-[10px] text-emerald-700 font-medium">更正选项:</span>
+                      {['A', 'B', 'C', 'D'].map((letter) => (
+                        <button
+                          key={letter}
+                          type="button"
+                          onClick={() => {
+                            const updated = { ...record, standardAnswer: letter };
+                            setRecord(updated);
+                            onUpdateRecord(updated);
+                          }}
+                          className={`w-4 h-4 rounded text-[10px] font-bold flex items-center justify-center transition cursor-pointer ${
+                            record.standardAnswer?.trim().toUpperCase() === letter
+                              ? 'bg-emerald-700 text-white'
+                              : 'bg-white text-emerald-800 border border-emerald-300 hover:bg-emerald-100'
+                          }`}
+                        >
+                          {letter}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                 </div>
                 {record.explanation && (
                   <div className="text-xs text-slate-700 bg-white p-3 rounded-xl border border-slate-200 leading-relaxed">
@@ -220,17 +435,62 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
             )}
           </div>
 
-          {/* 2. Variant Practice Problems (举一反三) */}
+          {/* 2. Multi-Round Variant Practice Problems (举一反三特训区) */}
           <div className="space-y-4">
-            <div className="flex items-center space-x-2">
-              <Sparkles className="w-5 h-5 text-amber-500" />
-              <h4 className="text-base font-black text-slate-900">
-                举一反三变式训练 (共 3 题)
-              </h4>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-2 border-b border-slate-200 gap-3">
+              <div className="flex items-center space-x-2">
+                <Sparkles className="w-5 h-5 text-amber-500" />
+                <h4 className="text-base font-black text-slate-900">
+                  举一反三变式训练（支持题目下方直接在线作答与即时批改）
+                </h4>
+              </div>
+
+              {/* Continuous Generation Button */}
+              <button
+                type="button"
+                disabled={isGeneratingNextRound}
+                onClick={handleGenerateNextRound}
+                className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-amber-500 via-amber-600 to-indigo-600 hover:from-amber-400 hover:to-indigo-500 text-white font-bold text-xs shadow-md shadow-amber-200 hover:shadow-lg transition flex items-center space-x-1.5 cursor-pointer disabled:opacity-50"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isGeneratingNextRound ? 'animate-spin' : ''}`} />
+                <span>
+                  {isGeneratingNextRound
+                    ? '正在生成下一轮新题...'
+                    : '🔄 还没掌握？换3道新变式题'}
+                </span>
+              </button>
             </div>
 
-            {record.variants && record.variants.length > 0 ? (
-              record.variants.map((v, idx) => {
+            {generateError && (
+              <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-rose-700 text-xs flex items-center space-x-2">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>{generateError}</span>
+              </div>
+            )}
+
+            {/* Practice Round Tabs */}
+            {practiceRounds.length > 1 && (
+              <div className="flex items-center space-x-2 overflow-x-auto pb-1">
+                {practiceRounds.map((r, rIdx) => (
+                  <button
+                    key={r.round || rIdx}
+                    type="button"
+                    onClick={() => setSelectedRoundIndex(rIdx)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition whitespace-nowrap cursor-pointer ${
+                      selectedRoundIndex === rIdx
+                        ? 'bg-indigo-600 text-white shadow-xs'
+                        : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    }`}
+                  >
+                    第 {r.round || rIdx + 1} 轮特训 ({r.variants.length}题)
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Variant Cards */}
+            {activeVariants.length > 0 ? (
+              activeVariants.map((v, idx) => {
                 const isRevealed = !!revealedAnswers[v.id || idx];
                 return (
                   <div
@@ -253,18 +513,19 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
                         <h5 className="font-bold text-slate-800 text-sm">{v.title}</h5>
                       </div>
 
-                      <button
-                        type="button"
-                        onClick={() => toggleReveal(v.id || String(idx))}
-                        className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center space-x-1"
-                      >
-                        <span>{isRevealed ? '隐藏解析' : '自测后揭晓解析'}</span>
-                        {isRevealed ? (
-                          <ChevronUp className="w-3.5 h-3.5" />
-                        ) : (
-                          <ChevronDown className="w-3.5 h-3.5" />
+                      <div className="flex items-center space-x-2">
+                        {v.hasChecked && (
+                          <span
+                            className={`px-2 py-0.5 rounded-md text-[11px] font-bold flex items-center ${
+                              v.isCorrect
+                                ? 'bg-emerald-100 text-emerald-800'
+                                : 'bg-rose-100 text-rose-800'
+                            }`}
+                          >
+                            {v.isCorrect ? '已答对 ★' : '需巩固'}
+                          </span>
                         )}
-                      </button>
+                      </div>
                     </div>
 
                     {/* Question Stem */}
@@ -272,23 +533,17 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
                       {v.questionText}
                     </div>
 
-                    {/* Options */}
-                    {v.options && v.options.length > 0 && (
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
-                        {v.options.map((opt, oIdx) => (
-                          <div
-                            key={oIdx}
-                            className="p-2 rounded-lg bg-slate-50 border border-slate-200 text-xs text-slate-700"
-                          >
-                            {opt}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                    {/* Interactive Answer Box right under the problem */}
+                    <InteractiveAnswerBox
+                      problem={v}
+                      onAnswerSubmit={handleAnswerSubmit}
+                      isRevealed={isRevealed}
+                      onToggleReveal={() => toggleReveal(v.id || String(idx))}
+                    />
 
                     {/* Revealed Answer & Pitfall Analysis */}
                     {isRevealed && (
-                      <div className="pt-3 border-t border-slate-100 space-y-2.5">
+                      <div className="pt-3 border-t border-slate-100 space-y-2.5 animate-in fade-in duration-200">
                         <div className="flex items-start space-x-2 text-xs">
                           <span className="font-bold text-emerald-800 px-2 py-0.5 rounded bg-emerald-100 shrink-0">
                             标准答案
@@ -343,12 +598,12 @@ export const MistakeDetailModal: React.FC<MistakeDetailModalProps> = ({
         {/* Modal Footer */}
         <div className="px-6 py-4 bg-slate-50 border-t border-slate-200 flex items-center justify-between shrink-0">
           <span className="text-xs text-slate-500">
-            久久的闯关星球 · 掌握一道错题，攻克一个模块
+            久久的闯关星球 · 针对错题在线互动练习与多轮强化
           </span>
           <button
             type="button"
             onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold shadow-xs transition"
+            className="px-5 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-xs font-bold shadow-xs transition cursor-pointer"
           >
             完成查看
           </button>

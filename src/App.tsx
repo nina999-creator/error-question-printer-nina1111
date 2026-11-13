@@ -62,6 +62,14 @@ export default function App() {
     }
   };
 
+  const handleUpdateRecord = (updatedRecord: MistakeRecord) => {
+    const updatedList = updateMistakeRecord(updatedRecord);
+    setRecords(updatedList);
+    if (detailModalRecord && detailModalRecord.id === updatedRecord.id) {
+      setDetailModalRecord(updatedRecord);
+    }
+  };
+
   const handleOpenPrintPreview = (selected: MistakeRecord[]) => {
     setPrintPreviewRecords(selected);
   };
@@ -150,6 +158,7 @@ export default function App() {
             handleOpenPrintPreview([rec]);
           }}
           onToggleMastery={handleToggleMastery}
+          onUpdateRecord={handleUpdateRecord}
         />
       )}
 

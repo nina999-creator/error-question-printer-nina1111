@@ -8,6 +8,18 @@ export interface VariantProblem {
   explanation: string;
   pitfallAnalysis: string;
   keywordsToHighlight: string[];
+  // Interactive answering fields
+  childAnswer?: string;
+  isCorrect?: boolean | null;
+  hasChecked?: boolean;
+  answeredAt?: number;
+}
+
+export interface PracticeRound {
+  round: number;
+  generatedAt: number;
+  title?: string;
+  variants: VariantProblem[];
 }
 
 export interface MistakeRecord {
@@ -23,8 +35,13 @@ export interface MistakeRecord {
   explanation: string;
   difficulty?: string;
   imageUrl?: string;
+  hasDiagram?: boolean;
+  diagramDescription?: string;
   knowledgeSummary?: string;
   variants: VariantProblem[];
+  // Multi-round practice support
+  practiceRounds?: PracticeRound[];
+  currentRound?: number;
   masteryStatus?: 'learning' | 'mastered';
   tags?: string[];
 }
